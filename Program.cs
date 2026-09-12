@@ -5,26 +5,39 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Railway provides DATABASE_URL in postgres://... format.
-// Convert it to Npgsql's key=value connection string.
+// --- DIAGNOSTIC: log what we see ---
 var raw = Environment.GetEnvironmentVariable("DATABASE_URL");
-string? conn = null;
+Console.WriteLine("=== ENV CHECK ===");
+Console.WriteLine($"DATABASE_URL present: {!string.IsNullOrEmpty(raw)}");
 if (!string.IsNullOrEmpty(raw))
 {
-    var uri = new Uri(raw);
-    var userInfo = uri.UserInfo.Split(':', 2);
-    conn = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};" +
-           $"Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
+    var masked = System.Text.RegularExpressions.Regex.Replace(
+        raw, @"(://[^:]+:)([^@]+)(@)", "$1***$2");
+    Console.WriteLine($"DATABASE_URL (masked): {masked}");
+}
+Console.WriteLine($"HMAC_KEY present: {!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HMAC_KEY"))}");
+Console.WriteLine($"ADMIN_TOKEN present: {!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ADMIN_TOKEN"))}");
+Console.WriteLine("=================");
+
+if (string.IsNullOrEmpty(raw))
+{
+    throw new InvalidOperationException(
+        "DATABASE_URL environment variable is not set. " +
+        "In Railway: app service → Variables → Add Reference → Postgres → DATABASE_URL");
 }
 
-builder.Services.AddDbContext<LicenseDbContext>(opt =>
-    opt.UseNpgsql(conn ?? builder.Configuration.GetConnectionString("Default")));
+string conn;
+var uri = new Uri(raw);
+var userInfo = uri.UserInfo.Split(':', 2);
+conn = $"Host={uri.Host};Port={uri.Port};Database={uri.AbsolutePath.TrimStart('/')};" +
+       $"Username={userInfo[0]};Password={userInfo[1]};SSL Mode=Require;Trust Server Certificate=true";
+
+builder.Services.AddDbContext<LicenseDbContext>(opt => opt.UseNpgsql(conn));
 builder.Services.AddScoped<LicenseService>();
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 
-// Apply migrations at startup so the schema is always current.
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<LicenseDbContext>();
